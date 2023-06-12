@@ -69,11 +69,11 @@ class Attention(nn.Module):
     
     def forward(self, emb, enc_outs, mask = None):
         if self.method == 'dot':
-            attn_energies = self.dot(emb, enc_outs)
+            attn_energies = self.dot(enc_outs, enc_outs)
         elif self.method == 'general':
-            attn_energies = self.general(emb, enc_outs)
+            attn_energies = self.general(enc_outs, enc_outs)
         elif self.method == 'concat':
-            attn_energies = self.concat(emb, enc_outs)
+            attn_energies = self.concat(enc_outs, enc_outs)
         elif self.method == 'bahdanau':
             attn_energies = self.bahdanau(emb, enc_outs)
         if mask is not None:
@@ -176,7 +176,7 @@ class Seq2Seq(nn.Module):
                 inp = top_guess
         return torch.stack(outputs)
 
-with open("../dataset/uoh_single_split.txt", "r") as fread:
+with open("../dataset/uoh.txt", "r") as fread:
     lines = fread.readlines()
 
 dataset = []
@@ -247,22 +247,27 @@ for data in train_dataset:
 
 #char_vocab.add('0')
 #char_vocab.add('1')
-char_vocab.add('*')
 char_vocab = sorted(list(char_vocab))
+char_vocab.remove('>')
+char_vocab.remove('<')
+char_vocab.insert(0, '>')
+char_vocab.insert(0, '<')
+char_vocab.insert(0, '*')
 #char_vocab[char_vocab.index('0')] = 0
 #char_vocab[char_vocab.index('1')] = 1
 
 vocab_size = len(char_vocab)
 token_index = dict([(char, i) for i, char in enumerate(char_vocab)])
-tgt_location_vocab = set()
-tgt_location_vocab.add('0')
-tgt_location_vocab.add('1')
-tgt_location_vocab.add('<')
-tgt_location_vocab.add('>')
-tgt_location_vocab.add('*')
-tgt_location_vocab = sorted(list(tgt_location_vocab))
+print(token_index)
+tgt_location_vocab = list()
+tgt_location_vocab.append('*')
+tgt_location_vocab.append('<')
+tgt_location_vocab.append('>')
+tgt_location_vocab.append('0')
+tgt_location_vocab.append('1')
 tgt_location_vocab_size = len(tgt_location_vocab)
 location_token_index = dict([(char, i) for i, char in enumerate(tgt_location_vocab)])
+print(location_token_index)
 
 def tokenizeDataset(X_train, Y_train_location, Y_train_split):
     X_train_tokenized = []
@@ -386,10 +391,11 @@ metric3 = Perplexity(ignore_index = token_index['*'])
 metric4 = Perplexity(ignore_index = token_index['*'])
 
 print("number of parameters : {}".format(sum(p.numel() for p in model.parameters())))
+print("dataset : train : {} || valid : {} || test : {}".format(len(train_dataset), len(valid_dataset), len(test_dataset)))
 print("train : size_reject_counter : {} || reject_counter : {}".format(train_size_reject_counter, train_reject_counter))
 print("valid : size_reject_counter : {} || reject_counter : {}".format(valid_size_reject_counter, valid_reject_counter))
 print("test : size_reject_counter : {} || reject_counter : {}".format(test_size_reject_counter, test_reject_counter))
-
+print(model)
 
 def getAccuracyCounter(preds, expec, phase):
     counter = 0
