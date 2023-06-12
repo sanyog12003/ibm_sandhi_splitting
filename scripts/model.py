@@ -67,15 +67,15 @@ class Attention(nn.Module):
         else:
             raise NotImplementedError
     
-    def forward(self, dec_out, enc_outs, mask = None):
+    def forward(self, emb, enc_outs, mask = None):
         if self.method == 'dot':
-            attn_energies = self.dot(dec_out, enc_outs)
+            attn_energies = self.dot(enc_outs, enc_outs)
         elif self.method == 'general':
-            attn_energies = self.general(dec_out, enc_outs)
+            attn_energies = self.general(enc_outs, enc_outs)
         elif self.method == 'concat':
-            attn_energies = self.concat(dec_out, enc_outs)
+            attn_energies = self.concat(enc_outs, enc_outs)
         elif self.method == 'bahdanau':
-            attn_energies = self.bahdanau(dec_out, enc_outs)
+            attn_energies = self.bahdanau(emb, enc_outs)
         if mask is not None:
             if(self.method == 'bahdanau'):
                 attn_energies = attn_energies.squeeze(1).transpose(1, 0)
@@ -90,16 +90,16 @@ class Attention(nn.Module):
             weighted = torch.bmm(attn_energies, self.v_linear(enc_outs))
         return weighted.permute(1, 0, 2)
 
-    def dot(self, dec_out, enc_outs):
-        return torch.sum(dec_out*enc_outs, dim=2)
+    def dot(self, emb, enc_outs):
+        return torch.sum(emb*enc_outs, dim=2)
 
-    def general(self, dec_out, enc_outs):
+    def general(self, emb, enc_outs):
         energy = self.w(enc_outs)
-        return torch.sum(dec_out*energy, dim=2)
+        return torch.sum(emb*energy, dim=2)
 
-    def concat(self, dec_out, enc_outs):
-        dec_out = dec_out.expand(enc_outs.shape[0], -1, -1)
-        energy = torch.cat((dec_out, enc_outs), 2)
+    def concat(self, emb, enc_outs):
+        emb = emb.expand(enc_outs.shape[0], -1, -1)
+        energy = torch.cat((emb, enc_outs), 2)
         return torch.sum(self.v * self.w(energy).tanh(), dim=2)
 
     def bahdanau(self, q, k): 
@@ -247,22 +247,27 @@ for data in train_dataset:
 
 #char_vocab.add('0')
 #char_vocab.add('1')
-char_vocab.add('*')
 char_vocab = sorted(list(char_vocab))
+char_vocab.remove('>')
+char_vocab.remove('<')
+char_vocab.insert(0, '>')
+char_vocab.insert(0, '<')
+char_vocab.insert(0, '*')
 #char_vocab[char_vocab.index('0')] = 0
 #char_vocab[char_vocab.index('1')] = 1
 
 vocab_size = len(char_vocab)
 token_index = dict([(char, i) for i, char in enumerate(char_vocab)])
-tgt_location_vocab = set()
-tgt_location_vocab.add('0')
-tgt_location_vocab.add('1')
-tgt_location_vocab.add('<')
-tgt_location_vocab.add('>')
-tgt_location_vocab.add('*')
-tgt_location_vocab = sorted(list(tgt_location_vocab))
+print(token_index)
+tgt_location_vocab = list()
+tgt_location_vocab.append('*')
+tgt_location_vocab.append('<')
+tgt_location_vocab.append('>')
+tgt_location_vocab.append('0')
+tgt_location_vocab.append('1')
 tgt_location_vocab_size = len(tgt_location_vocab)
 location_token_index = dict([(char, i) for i, char in enumerate(tgt_location_vocab)])
+print(location_token_index)
 
 def tokenizeDataset(X_train, Y_train_location, Y_train_split):
     X_train_tokenized = []
@@ -386,17 +391,21 @@ metric3 = Perplexity(ignore_index = token_index['*'])
 metric4 = Perplexity(ignore_index = token_index['*'])
 
 print("number of parameters : {}".format(sum(p.numel() for p in model.parameters())))
+print("dataset : train : {} || valid : {} || test : {}".format(len(train_dataset), len(valid_dataset), len(test_dataset)))
 print("train : size_reject_counter : {} || reject_counter : {}".format(train_size_reject_counter, train_reject_counter))
 print("valid : size_reject_counter : {} || reject_counter : {}".format(valid_size_reject_counter, valid_reject_counter))
 print("test : size_reject_counter : {} || reject_counter : {}".format(test_size_reject_counter, test_reject_counter))
+print(model)
 
-
-def getAccuracyCounter(preds, expec):
+def getAccuracyCounter(preds, expec, phase):
     counter = 0
     preds = preds.transpose(1, 0)
     expec = expec.transpose(1, 0)
     for i in range(preds.shape[0]):
-        index = (expec[i] == torch.tensor(location_token_index['>'])).nonzero().flatten().tolist()[0]
+        if(phase == "location_decoder"):
+            index = (expec[i] == torch.tensor(location_token_index['>'])).nonzero().flatten().tolist()[0]
+        else:
+            index = (expec[i] == torch.tensor(token_index['>'])).nonzero().flatten().tolist()[0]
         if(torch.equal(preds[i, :(index + 1)], expec[i, :(index + 1)])):
             counter = counter + 1
     return counter;
@@ -413,7 +422,7 @@ def train(model, loader, optimizer, criterion, phase):
     counter = 0
     accuracy_counter = 0
     samples = 0
-    if phase == "location_decoder":
+    if(phase == "location_decoder"):
         for i, (x, y_location, y_split) in enumerate(loader):
             optimizer.zero_grad()
             x = x.to(device).long()
@@ -436,7 +445,7 @@ def train(model, loader, optimizer, criterion, phase):
             optimizer.step()
             epoch_loss = epoch_loss + loss.item()
             counter = counter + 1
-            accuracy_counter = accuracy_counter + getAccuracyCounter(predicted_location, expected_location)
+            accuracy_counter = accuracy_counter + getAccuracyCounter(predicted_location, expected_location, phase)
             samples = samples + x.shape[1]
     else:
         for i, (x, y_location, y_split) in enumerate(loader):
@@ -460,7 +469,7 @@ def train(model, loader, optimizer, criterion, phase):
             optimizer.step()
             epoch_loss = epoch_loss + loss.item()
             counter = counter + 1
-            accuracy_counter = accuracy_counter + getAccuracyCounter(predicted_split, expected_split)
+            accuracy_counter = accuracy_counter + getAccuracyCounter(predicted_split, expected_split, phase)
             samples = samples + x.shape[1]
     return epoch_loss/counter, accuracy_counter/samples
 
@@ -471,7 +480,7 @@ def evaluate(model, loader, criterion, first_metric, second_metric, dataset, pha
     accuracy_counter = 0
     samples = 0
     first_metric.reset()
-    if phase == "location_decoder":
+    if(phase == "location_decoder"):
         for i, (x, y_location, y_split) in enumerate(loader):
             x = x.to(device).long()
             y_location = y_location.to(device).long()
@@ -491,7 +500,7 @@ def evaluate(model, loader, criterion, first_metric, second_metric, dataset, pha
             loss = criterion(output, y_location)
             epoch_loss += loss.item()
             counter = counter + 1
-            accuracy_counter = accuracy_counter + getAccuracyCounter(predicted_location, expected_location)
+            accuracy_counter = accuracy_counter + getAccuracyCounter(predicted_location, expected_location, phase)
             if(dataset == "valid"):
                 perp_location = perp_location.cpu()
                 expected_location = expected_location.cpu()
@@ -512,13 +521,13 @@ def evaluate(model, loader, criterion, first_metric, second_metric, dataset, pha
             if(i % 80 == 0):
                 print("expectation : ", expected_split[:, 0])
                 print("prediction : ", predicted_split[:, 0])
-            output = output.view(-1, output_dim)
+            output = output.view(-1, output.shape[-1])
             y_split = y_split[1:].view(-1).cpu()
             output = output.cpu()
             loss = criterion(output, y_split)
             epoch_loss += loss.item()
             counter = counter + 1
-            accuracy_counter = accuracy_counter + getAccuracyCounter(predicted_split, expected_split)
+            accuracy_counter = accuracy_counter + getAccuracyCounter(predicted_split, expected_split, phase)
             if(dataset == "valid"):
                 perp_split = perp_split.cpu()
                 expected_split = expected_split.cpu()
@@ -532,19 +541,25 @@ def evaluate(model, loader, criterion, first_metric, second_metric, dataset, pha
         return epoch_loss/counter, accuracy_counter/samples
 
 
-N_EPOCHS = 10
-min_perp_metric = float('inf')
+N_EPOCHS = 20
+min_location_perp_metric = float('inf')
+min_split_perp_metric = float('inf')
 for epoch in range(N_EPOCHS):
-    if(epoch < N_EPOCHS):
+    if(epoch < (N_EPOCHS/2)):
         phase = "location_decoder"
         criterion = location_criterion
         first_metric = metric1
         second_metric = metric2
+        if(epoch == 0):
+            min_perp_metric = min_location_perp_metric
     else:
         phase = "split_decoder"
         criterion = split_criterion
         first_metric = metric3
         second_metric = metric4
+        if(epoch == N_EPOCHS/2):
+            optimizer.param_groups[0]['lr'] = 1.0
+            min_perp_metric = min_split_perp_metric
     train_loss, train_accuracy = train(model, train_dataloader, optimizer, criterion, phase)
     print("training completed .... ")
     valid_loss, valid_accuracy, perp_metric = evaluate(model, valid_dataloader, criterion, first_metric, second_metric, "valid", phase)
@@ -553,8 +568,12 @@ for epoch in range(N_EPOCHS):
     else:
         min_perp_metric = perp_metric
     print("Epoch : {} || train : loss : {} || accuracy : {} || valid:  loss : {} || min perplexity : {} || perplexity : {} || accuracy : {}".format(epoch, train_loss, train_accuracy * 100, valid_loss, min_perp_metric, perp_metric, valid_accuracy * 100))
-
-test_location_loss, test_location_accuracy = evaluate(model, test_dataloader, location_criterion, metric1, metric2, "test", "location_decoder")
-print("test location:  loss : {} || accuracy : {}".format(test_location_loss, test_location_accuracy * 100)) 
-test_split_loss, test_split_accuracy = evaluate(model, test_dataloader, split_criterion, "test", "split_decoder")
-print("test split : loss : {} || accuracy : {}".format(test_split_loss, test_split_accuracy * 100))
+    if(epoch == (N_EPOCHS/2) - 1):
+        test_location_loss, test_location_accuracy = evaluate(model, test_dataloader, location_criterion, metric1, metric2, "test", "location_decoder")
+        print("test location:  loss : {} || accuracy : {}".format(test_location_loss, test_location_accuracy * 100)) 
+        print("\n")
+        print("\n")
+        print("Starting split decoder training")
+    if(epoch == (N_EPOCHS - 1)):
+        test_split_loss, test_split_accuracy = evaluate(model, test_dataloader, split_criterion, metric3, metric4, "test", "split_decoder")
+        print("test split : loss : {} || accuracy : {}".format(test_split_loss, test_split_accuracy * 100))
