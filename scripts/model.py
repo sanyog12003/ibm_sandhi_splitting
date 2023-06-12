@@ -124,7 +124,7 @@ class Decoder(nn.Module):
         self.vocab_size = vocab_size
         self.tgt_vocab_size = tgt_vocab_size
         self.embed = nn.Embedding(tgt_vocab_size, embed_dim)
-        self.decoder_module = nn.LSTM(hidden_dim + embed_dim, hidden_dim, num_layers = 2, dropout = dout)
+        self.decoder_module = nn.LSTM(2 * hidden_dim + embed_dim, hidden_dim, num_layers = 2, dropout = dout)
         self.fc_out = nn.Linear(hidden_dim, tgt_vocab_size)
 
     def forward(self, inp, hidden, encoder_output, mask = None):
@@ -143,7 +143,7 @@ class Decoder(nn.Module):
         inp = inp.unsqueeze(0)
         embeddings = self.embed(inp)
         weighted = self.attention(embeddings, encoder_output, mask)
-        output = torch.cat((embeddings, weighted), dim = 2)
+        output = torch.cat((embeddings, weighted, hidden[0][1].unsqueeze(0)), dim = 2)
         output, hidden = self.decoder_module(output, hidden)
         prediction = self.fc_out(output)
         return F.log_softmax(prediction.squeeze(0), -1), hidden
@@ -205,8 +205,11 @@ def getSplitLocationArr(input, output):
                 if(prev_val + 1 == len(input)):
                     location_arr[prev_val] = 1
                 else:
+                    """
                     for j in range(prev_val + 1, len(input)):
                         location_arr[j] = 1
+                    """
+                    location_arr[prev_val + 1] = 1
             if(prev == -1):
                 continue
             else:
@@ -216,8 +219,11 @@ def getSplitLocationArr(input, output):
                 if(prev_val + 1 == res[i]):
                    location_arr[prev_val] = 1
                 else: 
+                    """
                     for j in range(prev_val + 1, res[i]):
                         location_arr[j] = 1
+                    """
+                    location_arr[prev_val + 1] = 1
             prev_val = res[i]
         prev = res[i]
     return location_arr
@@ -250,6 +256,7 @@ for data in train_dataset:
 char_vocab = sorted(list(char_vocab))
 char_vocab.remove('>')
 char_vocab.remove('<')
+char_vocab.insert(0, '?')
 char_vocab.insert(0, '>')
 char_vocab.insert(0, '<')
 char_vocab.insert(0, '*')
@@ -263,6 +270,7 @@ tgt_location_vocab = list()
 tgt_location_vocab.append('*')
 tgt_location_vocab.append('<')
 tgt_location_vocab.append('>')
+tgt_location_vocab.append('?')
 tgt_location_vocab.append('0')
 tgt_location_vocab.append('1')
 tgt_location_vocab_size = len(tgt_location_vocab)
@@ -344,6 +352,9 @@ class customDataset(Dataset):
         x = list((pd.Series(x)).map(token_index))
         y_location = list((pd.Series(y_location)).map(location_token_index))
         y_split = list((pd.Series(y_split)).map(token_index))
+        for i in range(len(y_split)):
+            if math.isnan(y_split[i]):
+                y_split[i] = token_index['?']
         return torch.tensor(x), torch.tensor(y_location), torch.tensor(y_split)
 
 train_dataset = customDataset(X_train, Y_train_location, Y_train_split)
@@ -540,6 +551,13 @@ def evaluate(model, loader, criterion, first_metric, second_metric, dataset, pha
     else:
         return epoch_loss/counter, accuracy_counter/samples
 
+
+for i, (x, y_location, y_split) in enumerate(test_dataloader):
+    seq_len, batch_size = y_split.shape
+    for j in range(seq_len):
+        for k in range(batch_size):
+            if(y_split[j, k] < 0):
+                print(j, k, y_split[j, k])
 
 N_EPOCHS = 20
 min_location_perp_metric = float('inf')
