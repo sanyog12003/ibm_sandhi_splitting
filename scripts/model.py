@@ -61,9 +61,12 @@ class Attention(nn.Module):
             self.w = nn.Linear(hidden_dim*2, hidden_dim)
             self.v = torch.nn.Parameter(torch.FloatTensor(hidden_dim))
         elif method == 'bahdanau':
+            """
             self.q_linear = nn.Linear(embed_dim, hidden_dim, bias=False)
-            self.k_linear = nn.Linear(hidden_dim, hidden_dim, bias=False)
-            self.v_linear = nn.Linear(hidden_dim, hidden_dim, bias=False)
+            """
+            self.q_linear = nn.Linear(embed_dim, hidden_dim, bias = False)
+            self.k_linear = nn.Linear(hidden_dim, hidden_dim, bias = False)
+            self.v_linear = nn.Linear(hidden_dim, hidden_dim, bias = False)
         else:
             raise NotImplementedError
     
@@ -127,7 +130,7 @@ class Decoder(nn.Module):
         self.decoder_module = nn.LSTM(2 * hidden_dim + embed_dim, hidden_dim, num_layers = 2, dropout = dout)
         self.fc_out = nn.Linear(hidden_dim, tgt_vocab_size)
 
-    def forward(self, inp, hidden, encoder_output, mask = None):
+    def forward(self, inp, encoder_output, hidden = None, mask = None, flag = True):
         """
         inp = inp.unsqueeze(0)
         embeddings = self.embed(inp)
@@ -143,8 +146,12 @@ class Decoder(nn.Module):
         inp = inp.unsqueeze(0)
         embeddings = self.embed(inp)
         weighted = self.attention(embeddings, encoder_output, mask)
-        output = torch.cat((embeddings, weighted, hidden[0][1].unsqueeze(0)), dim = 2)
-        output, hidden = self.decoder_module(output, hidden)
+        if(flag):
+            output = torch.cat((embeddings, weighted, weighted), dim = 2)
+            output, hidden = self.decoder_module(output)
+        else:
+            output = torch.cat((embeddings, weighted, hidden[0][1].unsqueeze(0)), dim = 2)
+            output, hidden = self.decoder_module(output, hidden)
         prediction = self.fc_out(output)
         return F.log_softmax(prediction.squeeze(0), -1), hidden
 
@@ -163,11 +170,13 @@ class Seq2Seq(nn.Module):
 
         encoder_output, hidden = self.encoder(src)
         inp = tgt[0]
+        flag = True
         for i in range(1, tgt_len):
             if(phase == "location_decoder"):
-                output, hidden = self.location_decoder(inp, hidden, encoder_output, mask)
+                output, hidden = self.location_decoder(inp, encoder_output, hidden, mask, flag)
             else:
-                output, hidden = self.split_decoder(inp, hidden, encoder_output, mask)
+                output, hidden = self.split_decoder(inp, encoder_output, hidden, mask, flag)
+            flag = False
             outputs.append(output)
             top_guess = output.argmax(1)
             if(dataset == "train"):
@@ -205,11 +214,11 @@ def getSplitLocationArr(input, output):
                 if(prev_val + 1 == len(input)):
                     location_arr[prev_val] = 1
                 else:
-                    """
                     for j in range(prev_val + 1, len(input)):
                         location_arr[j] = 1
                     """
                     location_arr[prev_val + 1] = 1
+                    """
             if(prev == -1):
                 continue
             else:
@@ -219,11 +228,11 @@ def getSplitLocationArr(input, output):
                 if(prev_val + 1 == res[i]):
                    location_arr[prev_val] = 1
                 else: 
-                    """
                     for j in range(prev_val + 1, res[i]):
                         location_arr[j] = 1
                     """
                     location_arr[prev_val + 1] = 1
+                    """
             prev_val = res[i]
         prev = res[i]
     return location_arr
@@ -378,7 +387,7 @@ class MyCollate:
 
 dout = 0.3
 hidden_dim = 512
-emb_dim = 128
+embed_dim = 128
 batch_size = 64
 
 train_dataloader = DataLoader(train_dataset, batch_size = batch_size, num_workers = 0, shuffle = True, collate_fn = MyCollate(pad_idx = token_index['*'], tgt_pad_idx = location_token_index['*']))
@@ -386,10 +395,10 @@ valid_dataloader = DataLoader(valid_dataset, batch_size = batch_size, num_worker
 test_dataloader = DataLoader(test_dataset, batch_size = batch_size, num_workers = 0, shuffle = True, collate_fn = MyCollate(pad_idx = token_index['*'], tgt_pad_idx = location_token_index['*']))
 
 method = "bahdanau"
-attn = Attention(emb_dim, hidden_dim, method)
-encoder = Encoder(vocab_size, emb_dim, hidden_dim, dout)
-location_decoder = Decoder(vocab_size, tgt_location_vocab_size, emb_dim, hidden_dim, dout, attn)
-split_decoder = Decoder(vocab_size, vocab_size, emb_dim, hidden_dim, dout, attn)
+attn = Attention(embed_dim, hidden_dim, method)
+encoder = Encoder(vocab_size, embed_dim, hidden_dim, dout)
+location_decoder = Decoder(vocab_size, tgt_location_vocab_size, embed_dim, hidden_dim, dout, attn)
+split_decoder = Decoder(vocab_size, vocab_size, embed_dim, hidden_dim, dout, attn)
 
 model = Seq2Seq(encoder, location_decoder, split_decoder, device)
 model.to(device)
