@@ -62,7 +62,7 @@ class Attention(nn.Module):
             self.v = torch.nn.Parameter(torch.FloatTensor(hidden_dim))
         elif method == 'bahdanau':
             """
-            self.q_linear = nn.Linear(embed_dim, hidden_dim, bias=False)
+            self.q_linear = nn.Linear(hidden_dim, hidden_dim, bias=False)
             """
             self.q_linear = nn.Linear(embed_dim, hidden_dim, bias = False)
             self.k_linear = nn.Linear(hidden_dim, hidden_dim, bias = False)
@@ -114,35 +114,14 @@ class Attention(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, vocab_size, tgt_vocab_size, embed_dim, hidden_dim, dout, attention):
         super(Decoder, self).__init__()
-        """
-        self.attention = attention
-        self.vocab_size = vocab_size
-        self.location_vocab_size = location_vocab_size
-        self.embed = nn.Embedding(location_vocab_size, embed_dim)
-        self.decoder_module = nn.LSTM(embed_dim, hidden_dim, num_layers=2, dropout = dout)
-        self.fc = nn.Linear(hidden_dim * 2, hidden_dim)
-        self.fc_out = nn.Linear(hidden_dim, location_vocab_size)
-        """
         self.attention = attention
         self.vocab_size = vocab_size
         self.tgt_vocab_size = tgt_vocab_size
         self.embed = nn.Embedding(tgt_vocab_size, embed_dim)
-        self.decoder_module = nn.LSTM(2 * hidden_dim + embed_dim, hidden_dim, num_layers = 2, dropout = dout)
+        self.decoder_module = nn.LSTM(3 * hidden_dim + embed_dim, hidden_dim, num_layers = 2, dropout = dout)
         self.fc_out = nn.Linear(hidden_dim, tgt_vocab_size)
 
     def forward(self, inp, encoder_output, hidden = None, mask = None, flag = True):
-        """
-        inp = inp.unsqueeze(0)
-        embeddings = self.embed(inp)
-        output, hidden = self.decoder_module(embeddings, hidden)
-        a = self.attention(output, encoder_output, mask).transpose(1, 0).unsqueeze(1)
-        encoder_output = encoder_output.permute(1, 0, 2)
-        weighted = torch.bmm(a, encoder_output).permute(1, 0, 2)
-        output = torch.cat((output, weighted), dim = 2)
-        output = self.fc(output)
-        prediction = self.fc_out(output)
-        return F.log_softmax(prediction.squeeze(0), -1), hidden
-        """
         inp = inp.unsqueeze(0)
         embeddings = self.embed(inp)
         weighted = self.attention(embeddings, encoder_output, mask)
@@ -150,7 +129,7 @@ class Decoder(nn.Module):
             output = torch.cat((embeddings, weighted, weighted), dim = 2)
             output, hidden = self.decoder_module(output)
         else:
-            output = torch.cat((embeddings, weighted, hidden[0][1].unsqueeze(0)), dim = 2)
+            output = torch.cat((embeddings, weighted, hidden[0][0].unsqueeze(0), hidden[0][1].unsqueeze(0)), dim = 2)
             output, hidden = self.decoder_module(output, hidden)
         prediction = self.fc_out(output)
         return F.log_softmax(prediction.squeeze(0), -1), hidden
@@ -170,7 +149,7 @@ class Seq2Seq(nn.Module):
 
         encoder_output, hidden = self.encoder(src)
         inp = tgt[0]
-        flag = True
+        flag = False
         for i in range(1, tgt_len):
             if(phase == "location_decoder"):
                 output, hidden = self.location_decoder(inp, encoder_output, hidden, mask, flag)
@@ -185,7 +164,7 @@ class Seq2Seq(nn.Module):
                 inp = top_guess
         return torch.stack(outputs)
 
-with open("../dataset/uoh.txt", "r") as fread:
+with open("../dataset/iitd_dataset_single_split.txt", "r") as fread:
     lines = fread.readlines()
 
 dataset = []
@@ -239,26 +218,32 @@ def getSplitLocationArr(input, output):
 
 train_reject_counter = 0
 train_size_reject_counter = 0
-for data in train_dataset:
-    input = data[0]
-    if(len(input) == 0 or len(input) > 150):
-        train_size_reject_counter = train_size_reject_counter + 1
-        continue
-    if(len(input) - 3 >= len(data[1])):
-        train_reject_counter = train_reject_counter + 1
-        continue
-    output = '<' + data[1] + '>'
-    location_arr = getSplitLocationArr(data[0], data[1])
-    location_arr = '<' + ''.join(map(str, location_arr)) + '>'
-    X_train.append(input)
-    Y_train_location.append(location_arr)
-    Y_train_split.append(output)
-    for char in input:
-        if char not in char_vocab:
-            char_vocab.add(char)
-    for char in output:
-        if char not in char_vocab:
-            char_vocab.add(char)
+folder_name="iitd_single_split"
+
+with open("../dataset/" + folder_name + "/train.src", "w") as fwrite_src, open("../dataset/" + folder_name + "/train.tgt", "w") as fwrite_tgt, open("../dataset/" + folder_name + "/train.tgt_location", "w") as fwrite_tgt_location:
+    for data in train_dataset:
+        input = data[0]
+        if(len(input) == 0 or len(input) > 150):
+            train_size_reject_counter = train_size_reject_counter + 1
+            continue
+        if(len(input) - 3 >= len(data[1])):
+            train_reject_counter = train_reject_counter + 1
+            continue
+        fwrite_src.write(data[0] + "\n")
+        fwrite_tgt.write(data[1] + "\n")
+        output = '<' + data[1] + '>'
+        location_arr = getSplitLocationArr(data[0], data[1])
+        fwrite_tgt_location.write(''.join(map(str, location_arr)) + "\n")
+        location_arr = '<' + ''.join(map(str, location_arr)) + '>'
+        X_train.append(input)
+        Y_train_location.append(location_arr)
+        Y_train_split.append(output)
+        for char in input:
+            if char not in char_vocab:
+                char_vocab.add(char)
+        for char in output:
+            if char not in char_vocab:
+                char_vocab.add(char)
 
 #char_vocab.add('0')
 #char_vocab.add('1')
@@ -304,20 +289,24 @@ Y_valid_split = []
 
 valid_reject_counter = 0
 valid_size_reject_counter = 0
-for data in valid_dataset:
-    input = data[0]
-    if(len(input) == 0 or len(input) > 150):
-        valid_size_reject_counter = valid_size_reject_counter + 1
-        continue
-    if(len(input) - 3 >= len(data[1])):
-        valid_reject_counter = valid_reject_counter + 1
-        continue
-    output = '<' + data[1] + '>'
-    location_arr = getSplitLocationArr(data[0], data[1])
-    location_arr = '<' + ''.join(map(str, location_arr)) + '>'
-    X_valid.append(input)
-    Y_valid_location.append(location_arr)
-    Y_valid_split.append(output)
+with open("../dataset/" + folder_name + "/valid.src", "w") as fwrite_src, open("../dataset/" + folder_name + "/valid.tgt", "w") as fwrite_tgt, open("../dataset/" + folder_name + "/valid.tgt_location", "w") as fwrite_tgt_location:
+    for data in valid_dataset:
+        input = data[0]
+        if(len(input) == 0 or len(input) > 150):
+            valid_size_reject_counter = valid_size_reject_counter + 1
+            continue
+        if(len(input) - 3 >= len(data[1])):
+            valid_reject_counter = valid_reject_counter + 1
+            continue
+        fwrite_src.write(data[0] + "\n")
+        fwrite_tgt.write(data[1] + "\n")
+        output = '<' + data[1] + '>'
+        location_arr = getSplitLocationArr(data[0], data[1])
+        fwrite_tgt_location.write(''.join(map(str, location_arr)) + "\n")
+        location_arr = '<' + ''.join(map(str, location_arr)) + '>'
+        X_valid.append(input)
+        Y_valid_location.append(location_arr)
+        Y_valid_split.append(output)
 
 X_valid, Y_valid_location, Y_valid_split = tokenizeDataset(X_valid, Y_valid_location, Y_valid_split)
 
@@ -327,20 +316,24 @@ Y_test_split = []
 
 test_reject_counter = 0
 test_size_reject_counter = 0
-for data in test_dataset:
-    input = data[0]
-    if(len(input) == 0 or len(input) > 150):
-        test_size_reject_counter = test_size_reject_counter + 1
-        continue
-    if(len(input) - 3 >= len(data[1])):
-        test_reject_counter = test_reject_counter + 1
-        continue
-    output = '<' + data[1] + '>'
-    location_arr = getSplitLocationArr(data[0], data[1])
-    location_arr = '<' + ''.join(map(str, location_arr)) + '>'
-    X_test.append(input)
-    Y_test_location.append(location_arr)
-    Y_test_split.append(output)
+with open("../dataset/" + folder_name + "/test.src", "w") as fwrite_src, open("../dataset/" + folder_name + "/test.tgt", "w") as fwrite_tgt, open("../dataset/" + folder_name + "/test.tgt_location", "w") as fwrite_tgt_location:
+    for data in test_dataset:
+        input = data[0]
+        if(len(input) == 0 or len(input) > 150):
+            test_size_reject_counter = test_size_reject_counter + 1
+            continue
+        if(len(input) - 3 >= len(data[1])):
+            test_reject_counter = test_reject_counter + 1
+            continue
+        fwrite_src.write(data[0] + "\n")
+        fwrite_tgt.write(data[1] + "\n")
+        output = '<' + data[1] + '>'
+        location_arr = getSplitLocationArr(data[0], data[1])
+        fwrite_tgt_location.write(''.join(map(str, location_arr)) + "\n")
+        location_arr = '<' + ''.join(map(str, location_arr)) + '>'
+        X_test.append(input)
+        Y_test_location.append(location_arr)
+        Y_test_split.append(output)
 
 X_test, Y_test_location, Y_test_split = tokenizeDataset(X_test, Y_test_location, Y_test_split)
 
@@ -560,13 +553,14 @@ def evaluate(model, loader, criterion, first_metric, second_metric, dataset, pha
     else:
         return epoch_loss/counter, accuracy_counter/samples
 
-
+"""
 for i, (x, y_location, y_split) in enumerate(test_dataloader):
     seq_len, batch_size = y_split.shape
     for j in range(seq_len):
         for k in range(batch_size):
             if(y_split[j, k] < 0):
                 print(j, k, y_split[j, k])
+"""
 
 N_EPOCHS = 20
 min_location_perp_metric = float('inf')
@@ -604,3 +598,4 @@ for epoch in range(N_EPOCHS):
     if(epoch == (N_EPOCHS - 1)):
         test_split_loss, test_split_accuracy = evaluate(model, test_dataloader, split_criterion, metric3, metric4, "test", "split_decoder")
         print("test split : loss : {} || accuracy : {}".format(test_split_loss, test_split_accuracy * 100))
+
